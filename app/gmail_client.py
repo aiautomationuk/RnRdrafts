@@ -11,6 +11,7 @@ from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 TOKEN_STORE_PATH = os.environ.get("TOKEN_STORE_PATH", "/var/data/token_store.json")
+FALLBACK_TOKEN_STORE_PATH = "/tmp/token_store.json"
 
 
 def _client_config():
@@ -46,18 +47,32 @@ def _credentials_to_dict(credentials: Credentials) -> dict:
     }
 
 
-def load_stored_credentials():
-    if not os.path.exists(TOKEN_STORE_PATH):
+def _read_credentials(path: str):
+    if not os.path.exists(path):
         return None
-    with open(TOKEN_STORE_PATH, "r", encoding="utf-8") as handle:
+    with open(path, "r", encoding="utf-8") as handle:
         data = json.load(handle)
     return Credentials(**data)
 
 
-def save_credentials(credentials: Credentials):
-    os.makedirs(os.path.dirname(TOKEN_STORE_PATH), exist_ok=True)
-    with open(TOKEN_STORE_PATH, "w", encoding="utf-8") as handle:
+def load_stored_credentials():
+    credentials = _read_credentials(TOKEN_STORE_PATH)
+    if credentials:
+        return credentials
+    return _read_credentials(FALLBACK_TOKEN_STORE_PATH)
+
+
+def _write_credentials(credentials: Credentials, path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
         json.dump(_credentials_to_dict(credentials), handle)
+
+
+def save_credentials(credentials: Credentials):
+    try:
+        _write_credentials(credentials, TOKEN_STORE_PATH)
+    except PermissionError:
+        _write_credentials(credentials, FALLBACK_TOKEN_STORE_PATH)
 
 
 def exchange_code_for_tokens(code: str, redirect_uri: str):
