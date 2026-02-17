@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import contextmanager
 
@@ -5,6 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from .models import Base
+
+
+logger = logging.getLogger("email-responder")
 
 
 def _database_url():
@@ -16,12 +20,20 @@ def _database_url():
     return database_url
 
 
-engine = create_engine(_database_url(), pool_pre_ping=True)
+_connect_timeout = int(os.environ.get("DB_CONNECT_TIMEOUT", "5"))
+engine = create_engine(
+    _database_url(),
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": _connect_timeout},
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Database init failed: %s", exc)
 
 
 @contextmanager
