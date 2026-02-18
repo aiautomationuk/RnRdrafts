@@ -116,6 +116,12 @@ def send_smtp_reply(to_addr: str, subject: str, body: str, in_reply_to: str, ref
 
     recipients = [to_addr] + ([cc_addr] if cc_addr else [])
 
-    with smtplib.SMTP_SSL(host, port) as server:
-        server.login(username, password)
-        server.sendmail(from_addr, recipients, mime.as_string())
+    if port == 587:
+        with smtplib.SMTP(host, port) as server:
+            server.starttls()
+            server.login(username, password)
+            server.sendmail(from_addr, recipients, mime.as_string())
+    else:
+        with smtplib.SMTP_SSL(host, port) as server:
+            server.login(username, password)
+            server.sendmail(from_addr, recipients, mime.as_string())
