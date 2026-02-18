@@ -4,6 +4,7 @@ import threading
 import time
 
 from flask import Flask, jsonify, redirect, request, session as flask_session
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 
@@ -219,7 +220,14 @@ def poll_once():
                 token.token_json = updated
                 session_db.commit()
 
-            message_ids = list_unread_message_ids(service)
+            try:
+                message_ids = list_unread_message_ids(service)
+            except RefreshError:
+                logger.warning("Gmail token revoked for %s; clearing token.", token.user.email)
+                session_db.delete(token)
+                session_db.commit()
+                continue
+
             if not message_ids:
                 continue
 
