@@ -116,7 +116,7 @@ def send_smtp_reply(to_addr: str, subject: str, body: str, in_reply_to: str, ref
 
     recipients = [to_addr] + ([cc_addr] if cc_addr else [])
 
-    if port == 587:
+    if port in (587, 2525):
         with smtplib.SMTP(host, port) as server:
             server.starttls()
             server.login(username, password)
