@@ -1,5 +1,4 @@
 import imaplib
-import os
 import smtplib
 from email import message_from_bytes
 from email.header import decode_header, make_header
@@ -35,14 +34,7 @@ def _normalize_reply_subject(subject: str) -> str:
     return f"Re: {subject}"
 
 
-def connect_imap():
-    host = os.environ.get("IMAP_HOST", "").strip()
-    port = int(os.environ.get("IMAP_PORT", "993"))
-    username = os.environ.get("IMAP_USERNAME", "").strip()
-    password = os.environ.get("IMAP_PASSWORD", "").strip()
-    if not host or not username or not password:
-        return None
-
+def connect_imap(host: str, port: int, username: str, password: str):
     client = imaplib.IMAP4_SSL(host, port)
     client.login(username, password)
     return client
@@ -94,15 +86,19 @@ def parse_imap_message(message: Message):
     }
 
 
-def send_smtp_reply(to_addr: str, subject: str, body: str, in_reply_to: str, references: str, cc_addr: str | None):
-    host = os.environ.get("SMTP_HOST", "").strip()
-    port = int(os.environ.get("SMTP_PORT", "465"))
-    username = os.environ.get("SMTP_USERNAME", "").strip()
-    password = os.environ.get("SMTP_PASSWORD", "").strip()
-    from_addr = os.environ.get("SMTP_FROM", "").strip() or username
-    if not host or not username or not password or not from_addr:
-        raise ValueError("SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM are required.")
-
+def send_smtp_reply(
+    to_addr: str,
+    subject: str,
+    body: str,
+    in_reply_to: str,
+    references: str,
+    cc_addr: str | None,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str,
+    smtp_password: str,
+    smtp_from: str,
+):
     mime = MIMEText(body)
     mime["To"] = to_addr
     if cc_addr:
@@ -112,16 +108,16 @@ def send_smtp_reply(to_addr: str, subject: str, body: str, in_reply_to: str, ref
         mime["In-Reply-To"] = in_reply_to
     if references:
         mime["References"] = references
-    mime["From"] = from_addr
+    mime["From"] = smtp_from
 
     recipients = [to_addr] + ([cc_addr] if cc_addr else [])
 
-    if port in (587, 2525):
-        with smtplib.SMTP(host, port) as server:
+    if smtp_port in (587, 2525):
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
             server.starttls()
-            server.login(username, password)
-            server.sendmail(from_addr, recipients, mime.as_string())
+            server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, recipients, mime.as_string())
     else:
-        with smtplib.SMTP_SSL(host, port) as server:
-            server.login(username, password)
-            server.sendmail(from_addr, recipients, mime.as_string())
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, recipients, mime.as_string())

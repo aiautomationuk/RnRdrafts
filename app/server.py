@@ -31,7 +31,7 @@ from .imap_smtp_client import (
     parse_imap_message,
     send_smtp_reply,
 )
-from .models import GmailToken, ProcessedImapMessage, ProcessedMessage, User
+from .models import GmailToken, ImapCredential, ProcessedImapMessage, ProcessedMessage, User
 from .oauth_client import build_oauth_flow
 from .openai_client import classify_importance, generate_reply_text
 
@@ -47,8 +47,6 @@ LOGIN_SCOPES = [
 ]
 EMERGENCY_CC_EMAIL = os.environ.get("EMERGENCY_CC_EMAIL", "").strip()
 EMERGENCY_CC_LEVEL = os.environ.get("EMERGENCY_CC_LEVEL", "important").strip().lower()
-IMAP_FOLDER = os.environ.get("IMAP_FOLDER", "INBOX")
-IMAP_USERNAME = os.environ.get("IMAP_USERNAME", "").strip()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
@@ -202,6 +200,62 @@ def gmail_connect_callback():
     return "Gmail connected. You can close this tab."
 
 
+@app.post("/imap/connect")
+def imap_connect():
+    data = request.get_json() or {}
+    required = ["imap_host", "imap_username", "imap_password", "smtp_host", "smtp_username", "smtp_password", "smtp_from"]
+    for field in required:
+        if not data.get(field):
+            return jsonify({"error": f"{field} is required"}), 400
+
+    with get_session() as session_db:
+        user = _current_user(session_db)
+        if not user:
+            return jsonify({"error": "Login required"}), 401
+
+        existing = session_db.query(ImapCredential).filter_by(user_id=user.id).one_or_none()
+        if existing:
+            existing.imap_host = data["imap_host"]
+            existing.imap_port = int(data.get("imap_port", 993))
+            existing.imap_username = data["imap_username"]
+            existing.imap_password = data["imap_password"]
+            existing.imap_folder = data.get("imap_folder", "INBOX")
+            existing.smtp_host = data["smtp_host"]
+            existing.smtp_port = int(data.get("smtp_port", 2525))
+            existing.smtp_username = data["smtp_username"]
+            existing.smtp_password = data["smtp_password"]
+            existing.smtp_from = data["smtp_from"]
+        else:
+            session_db.add(ImapCredential(
+                user_id=user.id,
+                imap_host=data["imap_host"],
+                imap_port=int(data.get("imap_port", 993)),
+                imap_username=data["imap_username"],
+                imap_password=data["imap_password"],
+                imap_folder=data.get("imap_folder", "INBOX"),
+                smtp_host=data["smtp_host"],
+                smtp_port=int(data.get("smtp_port", 2525)),
+                smtp_username=data["smtp_username"],
+                smtp_password=data["smtp_password"],
+                smtp_from=data["smtp_from"],
+            ))
+        session_db.commit()
+
+    return jsonify({"status": "imap_connected"})
+
+
+@app.get("/imap/status")
+def imap_status():
+    with get_session() as session_db:
+        user = _current_user(session_db)
+        if not user:
+            return jsonify({"error": "Login required"}), 401
+        cred = session_db.query(ImapCredential).filter_by(user_id=user.id).one_or_none()
+        if not cred:
+            return jsonify({"connected": False})
+        return jsonify({"connected": True, "imap_username": cred.imap_username, "smtp_from": cred.smtp_from})
+
+
 def poll_once():
     with get_session() as session_db:
         tokens = session_db.query(GmailToken).join(User).all()
@@ -304,86 +358,105 @@ def poll_once():
                     session_db.rollback()
                 logger.info("Replied to message %s", message_id)
 
-        imap_client = connect_imap()
-        if not imap_client:
+        imap_creds = session_db.query(ImapCredential).join(User).all()
+        if not imap_creds:
+            logger.info("No IMAP credentials configured; skipping IMAP poll.")
             return
-        try:
-            uids = list_unseen_uids(imap_client, IMAP_FOLDER)
-            if not uids:
-                return
-            for uid in uids:
-                uid_str = uid.decode("utf-8", errors="ignore")
-                existing = (
-                    session_db.query(ProcessedImapMessage)
-                    .filter_by(imap_account=IMAP_USERNAME, imap_uid=uid_str)
-                    .one_or_none()
-                )
-                if existing:
-                    mark_seen(imap_client, uid)
+
+        logger.info("Polling IMAP for %s account(s).", len(imap_creds))
+        for cred in imap_creds:
+            imap_client = None
+            try:
+                imap_client = connect_imap(cred.imap_host, cred.imap_port, cred.imap_username, cred.imap_password)
+                uids = list_unseen_uids(imap_client, cred.imap_folder)
+                if not uids:
                     continue
 
-                message = fetch_message_by_uid(imap_client, uid)
-                if not message:
-                    continue
+                for uid in uids:
+                    uid_str = uid.decode("utf-8", errors="ignore")
+                    existing = (
+                        session_db.query(ProcessedImapMessage)
+                        .filter_by(imap_account=cred.imap_username, imap_uid=uid_str)
+                        .one_or_none()
+                    )
+                    if existing:
+                        mark_seen(imap_client, uid)
+                        continue
 
-                parsed = parse_imap_message(message)
-                if not parsed:
-                    continue
+                    message = fetch_message_by_uid(imap_client, uid)
+                    if not message:
+                        continue
 
-                from_email = parsed["from_email"].lower()
-                if IMAP_USERNAME and from_email == IMAP_USERNAME.lower():
-                    mark_seen(imap_client, uid)
-                    continue
+                    parsed = parse_imap_message(message)
+                    if not parsed:
+                        continue
 
-                if is_likely_bulk(parsed["headers"], parsed["subject"], parsed["body"], from_email):
-                    logger.info("Skipping likely bulk email from %s", from_email)
-                    mark_seen(imap_client, uid)
-                    continue
+                    from_email = parsed["from_email"].lower()
+                    if from_email == cred.imap_username.lower():
+                        mark_seen(imap_client, uid)
+                        continue
 
-                cc_addr = None
-                if EMERGENCY_CC_EMAIL:
-                    importance = classify_importance(
+                    if is_likely_bulk(parsed["headers"], parsed["subject"], parsed["body"], from_email):
+                        logger.info("Skipping likely bulk email from %s", from_email)
+                        mark_seen(imap_client, uid)
+                        continue
+
+                    cc_addr = None
+                    if EMERGENCY_CC_EMAIL:
+                        importance = classify_importance(
+                            sender_name=parsed["from_name"],
+                            sender_email=parsed["from_email"],
+                            subject=parsed["subject"],
+                            original_body=parsed["body"],
+                        )
+                        if EMERGENCY_CC_LEVEL == "emergency":
+                            if importance == "EMERGENCY":
+                                cc_addr = EMERGENCY_CC_EMAIL
+                        else:
+                            if importance in {"IMPORTANT", "EMERGENCY"}:
+                                cc_addr = EMERGENCY_CC_EMAIL
+
+                    reply_text = generate_reply_text(
                         sender_name=parsed["from_name"],
                         sender_email=parsed["from_email"],
                         subject=parsed["subject"],
                         original_body=parsed["body"],
                     )
-                    if EMERGENCY_CC_LEVEL == "emergency":
-                        if importance == "EMERGENCY":
-                            cc_addr = EMERGENCY_CC_EMAIL
-                    else:
-                        if importance in {"IMPORTANT", "EMERGENCY"}:
-                            cc_addr = EMERGENCY_CC_EMAIL
+                    if not reply_text:
+                        logger.warning("Assistant returned empty reply for IMAP %s", uid_str)
+                        continue
 
-                reply_text = generate_reply_text(
-                    sender_name=parsed["from_name"],
-                    sender_email=parsed["from_email"],
-                    subject=parsed["subject"],
-                    original_body=parsed["body"],
-                )
-                if not reply_text:
-                    logger.warning("Assistant returned empty reply for IMAP %s", uid_str)
-                    continue
-
-                send_smtp_reply(
-                    to_addr=parsed["reply_to"],
-                    subject=parsed["subject"],
-                    body=reply_text,
-                    in_reply_to=parsed["message_id"],
-                    references=parsed["references"],
-                    cc_addr=cc_addr,
-                )
-                mark_seen(imap_client, uid)
-                try:
-                    session_db.add(
-                        ProcessedImapMessage(imap_account=IMAP_USERNAME, imap_uid=uid_str)
+                    send_smtp_reply(
+                        to_addr=parsed["reply_to"],
+                        subject=parsed["subject"],
+                        body=reply_text,
+                        in_reply_to=parsed["message_id"],
+                        references=parsed["references"],
+                        cc_addr=cc_addr,
+                        smtp_host=cred.smtp_host,
+                        smtp_port=cred.smtp_port,
+                        smtp_username=cred.smtp_username,
+                        smtp_password=cred.smtp_password,
+                        smtp_from=cred.smtp_from,
                     )
-                    session_db.commit()
-                except IntegrityError:
-                    session_db.rollback()
-                logger.info("Replied to IMAP message %s", uid_str)
-        finally:
-            imap_client.logout()
+                    mark_seen(imap_client, uid)
+                    try:
+                        session_db.add(
+                            ProcessedImapMessage(imap_account=cred.imap_username, imap_uid=uid_str)
+                        )
+                        session_db.commit()
+                    except IntegrityError:
+                        session_db.rollback()
+                    logger.info("Replied to IMAP message %s for %s", uid_str, cred.imap_username)
+
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception("IMAP error for %s: %s", cred.imap_username, exc)
+            finally:
+                if imap_client:
+                    try:
+                        imap_client.logout()
+                    except Exception:  # pylint: disable=broad-except
+                        pass
 
 
 def poll_loop():
