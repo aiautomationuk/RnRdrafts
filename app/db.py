@@ -2,7 +2,7 @@ import logging
 import os
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from .models import Base
@@ -32,6 +32,14 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 def init_db():
     try:
         Base.metadata.create_all(bind=engine)
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE imap_credentials ADD COLUMN IF NOT EXISTS openai_assistant_id VARCHAR(128)"
+            ))
+            conn.execute(text(
+                "ALTER TABLE imap_credentials DROP CONSTRAINT IF EXISTS imap_credentials_user_id_key"
+            ))
+            conn.commit()
     except Exception as exc:  # pylint: disable=broad-except
         logger.exception("Database init failed: %s", exc)
 
