@@ -1,6 +1,15 @@
 import sys
 import os
 
+# Ensure virtualenv packages are available regardless of which Python Passenger invokes.
+_venv = os.path.join(os.environ.get("HOME", ""), "virtualenv", "readandreply", "3.11")
+for _sp in [
+    os.path.join(_venv, "lib64", "python3.11", "site-packages"),
+    os.path.join(_venv, "lib", "python3.11", "site-packages"),
+]:
+    if os.path.isdir(_sp) and _sp not in sys.path:
+        sys.path.insert(0, _sp)
+
 # Load .env before importing the app.
 # db.py creates the SQLAlchemy engine at module level, so DATABASE_URL must
 # be set before "from app.server import app" runs.

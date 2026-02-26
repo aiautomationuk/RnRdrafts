@@ -11,20 +11,11 @@ to match the exact path shown in cPanel's "Setup Python App" UI.
 import os
 import sys
 
-# Use the same virtualenv Python as Passenger.
-# Update this path to match the exact virtualenv path shown in cPanel.
-VENV_PYTHON = os.path.join(
-    os.environ.get("HOME", ""),
-    "virtualenv", "readandreply", "3.11", "bin", "python3"
-)
-if sys.executable != VENV_PYTHON:
-    os.execl(VENV_PYTHON, VENV_PYTHON, *sys.argv)
-
 # Load .env from the project root.
 def _load_dotenv(path):
     if not os.path.exists(path):
         return
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
