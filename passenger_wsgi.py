@@ -7,7 +7,7 @@ import os
 def _load_dotenv(path):
     if not os.path.exists(path):
         return
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
