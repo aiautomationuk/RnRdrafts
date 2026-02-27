@@ -123,6 +123,33 @@ def send_smtp_reply(
             server.sendmail(smtp_from, recipients, mime.as_string())
 
 
+def save_draft(
+    imap_client,
+    to_addr: str,
+    subject: str,
+    body: str,
+    in_reply_to: str,
+    references: str,
+    cc_addr: str | None,
+    smtp_from: str,
+    draft_folder: str = "Drafts",
+):
+    """Append a draft reply to the IMAP drafts folder instead of sending."""
+    mime = MIMEText(body)
+    mime["To"] = to_addr
+    if cc_addr:
+        mime["Cc"] = cc_addr
+    mime["Subject"] = _normalize_reply_subject(subject)
+    if in_reply_to:
+        mime["In-Reply-To"] = in_reply_to
+    if references:
+        mime["References"] = references
+    mime["From"] = smtp_from
+
+    raw = mime.as_bytes()
+    imap_client.append(draft_folder, "\\Draft", None, raw)
+
+
 def is_likely_bulk(headers, subject: str, body: str, from_email: str) -> bool:
     subject_lower = (subject or "").lower()
     body_lower = (body or "").lower()

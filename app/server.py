@@ -14,6 +14,7 @@ from .imap_smtp_client import (
     list_unseen_uids,
     mark_seen,
     parse_imap_message,
+    save_draft,
     send_smtp_reply,
 )
 from .models import ImapCredential, ProcessedImapMessage
@@ -26,6 +27,8 @@ logger = logging.getLogger("email-responder")
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "180"))
 EMERGENCY_CC_EMAIL = os.environ.get("EMERGENCY_CC_EMAIL", "").strip()
 EMERGENCY_CC_LEVEL = os.environ.get("EMERGENCY_CC_LEVEL", "important").strip().lower()
+DRAFT_MODE = os.environ.get("DRAFT_MODE", "true").lower() == "true"
+DRAFT_FOLDER = os.environ.get("DRAFT_FOLDER", "Drafts")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
@@ -283,19 +286,34 @@ def poll_once():
                         logger.warning("Assistant returned empty reply for IMAP %s", uid_str)
                         continue
 
-                    send_smtp_reply(
-                        to_addr=parsed["reply_to"],
-                        subject=parsed["subject"],
-                        body=reply_text,
-                        in_reply_to=parsed["message_id"],
-                        references=parsed["references"],
-                        cc_addr=cc_addr,
-                        smtp_host=cred.smtp_host,
-                        smtp_port=cred.smtp_port,
-                        smtp_username=cred.smtp_username,
-                        smtp_password=cred.smtp_password,
-                        smtp_from=cred.smtp_from,
-                    )
+                    if DRAFT_MODE:
+                        save_draft(
+                            imap_client=imap_client,
+                            to_addr=parsed["reply_to"],
+                            subject=parsed["subject"],
+                            body=reply_text,
+                            in_reply_to=parsed["message_id"],
+                            references=parsed["references"],
+                            cc_addr=cc_addr,
+                            smtp_from=cred.smtp_from,
+                            draft_folder=DRAFT_FOLDER,
+                        )
+                        logger.info("Saved draft for IMAP message %s for %s", uid_str, cred.imap_username)
+                    else:
+                        send_smtp_reply(
+                            to_addr=parsed["reply_to"],
+                            subject=parsed["subject"],
+                            body=reply_text,
+                            in_reply_to=parsed["message_id"],
+                            references=parsed["references"],
+                            cc_addr=cc_addr,
+                            smtp_host=cred.smtp_host,
+                            smtp_port=cred.smtp_port,
+                            smtp_username=cred.smtp_username,
+                            smtp_password=cred.smtp_password,
+                            smtp_from=cred.smtp_from,
+                        )
+                        logger.info("Replied to IMAP message %s for %s", uid_str, cred.imap_username)
                     mark_seen(imap_client, uid)
                     try:
                         session_db.add(
@@ -304,7 +322,6 @@ def poll_once():
                         session_db.commit()
                     except IntegrityError:
                         session_db.rollback()
-                    logger.info("Replied to IMAP message %s for %s", uid_str, cred.imap_username)
 
             except Exception as exc:  # pylint: disable=broad-except
                 logger.exception("IMAP error for %s: %s", cred.imap_username, exc)
