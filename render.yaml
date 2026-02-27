@@ -23,7 +23,7 @@ services:
       - key: DRAFT_MODE
         value: "true"
       - key: DRAFT_FOLDER
-        value: "Drafts"
+        value: "INBOX.Drafts"
       - key: POLL_INTERVAL_SECONDS
         value: "180"
       - key: EMERGENCY_CC_EMAIL
