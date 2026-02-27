@@ -2,7 +2,7 @@ import sys
 import os
 
 # Ensure virtualenv packages are available regardless of which Python Passenger invokes.
-_venv = os.path.join(os.environ.get("HOME", ""), "virtualenv", "readandreply", "3.11")
+_venv = os.path.join(os.environ.get("HOME", ""), "virtualenv", "readandreply-drafts", "3.11")
 for _sp in [
     os.path.join(_venv, "lib64", "python3.11", "site-packages"),
     os.path.join(_venv, "lib", "python3.11", "site-packages"),

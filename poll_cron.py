@@ -3,7 +3,7 @@
 Cron job script for email polling on cPanel hosting.
 
 Set up in cPanel > Cron Jobs with interval */3 * * * * and command:
-  /home/USERNAME/virtualenv/readandreply/3.11/bin/python3 /home/USERNAME/readandreply/poll_cron.py >> /home/USERNAME/readandreply/poll_cron.log 2>&1
+  /home/USERNAME/virtualenv/readandreply-drafts/3.11/bin/python3 /home/USERNAME/readandreply-drafts/poll_cron.py >> /home/USERNAME/readandreply-drafts/poll_cron.log 2>&1
 
 Replace USERNAME with your cPanel username and update the virtualenv path
 to match the exact path shown in cPanel's "Setup Python App" UI.
